@@ -31,27 +31,26 @@ const ADMISSION_TIMEOUT_MS = 5_000;
 
 export class AdmissionError extends Error {}
 
-export function authorizeFromEnv(env: AdmissionEnv): Authorize {
+export function authorizeFromEnv(env: AdmissionEnv, timeoutMs = ADMISSION_TIMEOUT_MS): Authorize {
   const binding = env.ADMISSION;
   const url = env.ADMISSION_URL;
   if (!binding && !url) {
-    return async () => {
-      throw new AdmissionError("no admission controller configured (bind ADMISSION or set ADMISSION_URL)");
-    };
+    return () =>
+      Promise.reject(new AdmissionError("no admission controller configured (bind ADMISSION or set ADMISSION_URL)"));
   }
   return async ({ nodePublic, source }) => {
     const init: RequestInit = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ NodePublic: nodePublic, Source: source }),
-      signal: AbortSignal.timeout(ADMISSION_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     };
     let res: Response;
     try {
       // A service binding needs a URL, but only the path reaches the Worker.
       res = binding ? await binding.fetch("https://admission/", init) : await fetch(url!, init);
     } catch (e) {
-      throw new AdmissionError(`admission controller unreachable: ${e}`);
+      throw new AdmissionError(`admission controller unreachable: ${String(e)}`);
     }
     if (res.status !== 200) {
       throw new AdmissionError(`admission controller: ${res.status} ${res.statusText}`);
@@ -60,7 +59,7 @@ export function authorizeFromEnv(env: AdmissionEnv): Authorize {
     try {
       body = JSON.parse((await res.text()).slice(0, 4096));
     } catch (e) {
-      throw new AdmissionError(`admission controller: bad JSON: ${e}`);
+      throw new AdmissionError(`admission controller: bad JSON: ${String(e)}`);
     }
     const allow = (body as { Allow?: unknown } | null)?.Allow;
     if (typeof allow !== "boolean" && allow !== undefined) {

@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"],
+    "resolveJsonModule": true
+  },
+  "include": ["./**/*.ts", "../src"],
+  "exclude": ["./e2e", "./fixtures/gen"]
+}

@@ -115,15 +115,8 @@ export class Relay extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.authorize = authorizeFromEnv(env);
-    ctx.blockConcurrencyWhile(async () => {
-      let sk = await ctx.storage.get<string>("serverPrivateKey");
-      if (!sk) {
-        sk = hex(nacl.box.keyPair().secretKey);
-        await ctx.storage.put("serverPrivateKey", sk);
-      }
-      const kp = nacl.box.keyPair.fromSecretKey(unhex(sk));
-      this.priv = kp.secretKey;
-      this.pub = kp.publicKey;
+    void ctx.blockConcurrencyWhile(async () => {
+      await this.loadServerKey();
       ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS stats (hour TEXT, name TEXT, n INTEGER, PRIMARY KEY (hour, name))",
       );
@@ -133,6 +126,19 @@ export class Relay extends DurableObject<Env> {
       const att = ws.deserializeAttachment() as Att | null;
       if (att?.key) this.byKey.set(att.key, ws);
     }
+  }
+
+  // loadServerKey reads the relay's key pair from storage, creating it on
+  // first use. Tests store a known key and call this again.
+  private async loadServerKey() {
+    let sk = await this.ctx.storage.get<string>("serverPrivateKey");
+    if (!sk) {
+      sk = hex(nacl.box.keyPair().secretKey);
+      await this.ctx.storage.put("serverPrivateKey", sk);
+    }
+    const kp = nacl.box.keyPair.fromSecretKey(unhex(sk));
+    this.priv = kp.secretKey;
+    this.pub = kp.publicKey;
   }
 
   private count(name: string, n = 1) {
@@ -164,9 +170,7 @@ export class Relay extends DurableObject<Env> {
     const url = new URL(req.url);
     if (url.pathname === "/stats") {
       this.flush();
-      const rows = this.ctx.storage.sql
-        .exec("SELECT hour, name, n FROM stats ORDER BY hour, name")
-        .toArray();
+      const rows = this.ctx.storage.sql.exec("SELECT hour, name, n FROM stats ORDER BY hour, name").toArray();
       return Response.json({ connected: this.byKey.size, rows });
     }
     const pair = new WebSocketPair();
@@ -286,12 +290,7 @@ export class Relay extends DurableObject<Env> {
     }
     const clientPub = body.slice(0, KEY_LEN);
     const boxed = body.subarray(KEY_LEN);
-    const opened = nacl.box.open(
-      boxed.subarray(NONCE_LEN),
-      boxed.subarray(0, NONCE_LEN),
-      clientPub,
-      this.priv,
-    );
+    const opened = nacl.box.open(boxed.subarray(NONCE_LEN), boxed.subarray(0, NONCE_LEN), clientPub, this.priv);
     if (!opened) {
       this.count("reject_badbox");
       ws.close(1008, "bad client info");
@@ -308,7 +307,7 @@ export class Relay extends DurableObject<Env> {
       }
     } catch (e) {
       this.count("reject_admission_error");
-      reason = e instanceof AdmissionError ? e.message : `admission check failed: ${e}`;
+      reason = e instanceof AdmissionError ? e.message : `admission check failed: ${String(e)}`;
       closeReason = "admission check failed";
     }
     if (ws.readyState !== WebSocket.READY_STATE_OPEN) return false; // closed during the check
@@ -339,7 +338,7 @@ export class Relay extends DurableObject<Env> {
     this.count("connects");
     const info = new TextEncoder().encode(JSON.stringify({ version: PROTOCOL_VERSION }));
     ws.send(frame(F.ServerInfo, seal(info, clientPub, this.priv)));
-    this.ensureAlarm();
+    await this.ensureAlarm();
     return true;
   }
 
@@ -380,17 +379,19 @@ export class Relay extends DurableObject<Env> {
     for (const src of this.sentTo.get(key) ?? []) {
       try {
         this.byKey.get(src)?.send(frame(F.PeerGone, keyBytes, Uint8Array.of(PEER_GONE_DISCONNECTED)));
-      } catch {}
+      } catch {
+        // The socket is already closed.
+      }
     }
     this.sentTo.delete(key);
     this.flush();
   }
 
-  async webSocketClose(ws: WebSocket) {
+  webSocketClose(ws: WebSocket) {
     this.gone(ws);
   }
 
-  async webSocketError(ws: WebSocket) {
+  webSocketError(ws: WebSocket) {
     this.gone(ws);
   }
 
@@ -415,7 +416,9 @@ export class Relay extends DurableObject<Env> {
     for (const ws of this.byKey.values()) {
       try {
         ws.send(ka);
-      } catch {}
+      } catch {
+        // The socket is already closed.
+      }
     }
     for (const ws of this.ctx.getWebSockets()) {
       const att = ws.deserializeAttachment() as Att | null;
@@ -427,7 +430,9 @@ export class Relay extends DurableObject<Env> {
         this.bufs.delete(ws);
         try {
           ws.close(1008, rejected ? att?.reason || "not allowed" : "handshake timeout");
-        } catch {}
+        } catch {
+          // The socket is already closed.
+        }
       } else {
         next = Math.min(next, deadline);
       }
@@ -464,7 +469,13 @@ export default {
       case "/derp": {
         const up = (req.headers.get("Upgrade") ?? "").toLowerCase();
         const proto = req.headers.get("Sec-WebSocket-Protocol") ?? "";
-        if (up !== "websocket" || !proto.split(",").map((s) => s.trim()).includes("derp")) {
+        if (
+          up !== "websocket" ||
+          !proto
+            .split(",")
+            .map((s) => s.trim())
+            .includes("derp")
+        ) {
           return new Response("DERP requires a WebSocket upgrade with subprotocol derp", { status: 426 });
         }
         return env.RELAY.get(env.RELAY.idFromName("relay")).fetch(req);
@@ -478,7 +489,8 @@ export default {
 // bearerMatches reports whether req carries "Authorization: Bearer <token>".
 // The compare takes the same time whether or not the token matches.
 function bearerMatches(req: Request, token: string): boolean {
-  const got = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const m = /^Bearer\s+(.*)$/i.exec(req.headers.get("Authorization") ?? "");
+  const got = m ? m[1] : "";
   const enc = new TextEncoder();
   const a = enc.encode(got);
   const b = enc.encode(token);
@@ -509,10 +521,13 @@ function derpMap(url: URL, stunServers?: string) {
       CanPort80: false,
     },
   ];
-  for (const hp of (stunServers ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
+  for (const hp of (stunServers ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)) {
     const i = hp.lastIndexOf(":");
-    const host = i > 0 ? hp.slice(0, i) : hp;
-    const stunPort = i > 0 ? Number(hp.slice(i + 1)) : 3478;
+    const host = i >= 0 ? hp.slice(0, i) : hp;
+    const stunPort = i >= 0 ? Number(hp.slice(i + 1)) : 3478;
     if (!host || !Number.isInteger(stunPort) || stunPort <= 0 || stunPort > 65535) continue;
     nodes.push({
       Name: `${REGION_ID}stun${nodes.length}`,

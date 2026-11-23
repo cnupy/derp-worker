@@ -6,14 +6,28 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit && tsc --noEmit -p test && tsc --noEmit -p examples/admission",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:e2e": "cd test/e2e && go test -count=1 -v . -args -e2e"
   },
   "dependencies": {
     "tweetnacl": "1.0.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.6.0",
     "@cloudflare/workers-types": "5.20261114.1",
+    "@eslint/js": "9.39.5",
+    "@types/node": "22.20.5",
+    "eslint": "9.39.5",
+    "globals": "17.14.0",
+    "prettier": "3.9.10",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "8.3.6",
+    "vitest": "5.0.5",
     "wrangler": "4.162.0"
   }
 }

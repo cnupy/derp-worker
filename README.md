@@ -25,12 +25,12 @@ Then configure admission, below. Until you do, every client is rejected.
 
 Optional settings:
 
-| Name | Kind | What it does |
-|---|---|---|
-| `ADMISSION` | service binding | Worker that answers admission requests. Preferred, because it needs no public URL. |
-| `ADMISSION_URL` | var | URL of an admission controller, used when `ADMISSION` is not bound. |
-| `STUN_SERVERS` | var | Comma-separated `host:port` list. Each one becomes a STUN node in `/derpmap.json`. |
-| `STATS_TOKEN` | secret | Turns on `/stats`. Without it `/stats` returns 404. |
+| Name            | Kind            | What it does                                                                       |
+| --------------- | --------------- | ---------------------------------------------------------------------------------- |
+| `ADMISSION`     | service binding | Worker that answers admission requests. Preferred, because it needs no public URL. |
+| `ADMISSION_URL` | var             | URL of an admission controller, used when `ADMISSION` is not bound.                |
+| `STUN_SERVERS`  | var             | Comma-separated `host:port` list. Each one becomes a STUN node in `/derpmap.json`. |
+| `STATS_TOKEN`   | secret          | Turns on `/stats`. Without it `/stats` returns 404.                                |
 
 The settings are commented out in `wrangler.jsonc`. Set secrets with `npx wrangler secret put <NAME>`.
 
@@ -39,13 +39,13 @@ The settings are commented out in `wrangler.jsonc`. Set secrets with `npx wrangl
 The relay uses derper's admission controller protocol, the one behind derper's `--verify-client-url`. For each new client it POSTs:
 
 ```json
-{"NodePublic": "nodekey:<64 hex>", "Source": "<client IP>"}
+{ "NodePublic": "nodekey:<64 hex>", "Source": "<client IP>" }
 ```
 
 and expects status 200 with:
 
 ```json
-{"Allow": true}
+{ "Allow": true }
 ```
 
 A missing `Allow` counts as false, as in derper. Unlike derper, this relay fails closed: an unreachable controller, a timeout after 5 s, a status other than 200, or a body it can't parse all reject the client.
@@ -77,8 +77,14 @@ Clients need STUN to find their public address for direct connections, and this 
       "RegionCode": "cf",
       "RegionName": "Cloudflare Worker",
       "Nodes": [
-        {"Name": "900a", "RegionID": 900, "HostName": "derp-worker.example.workers.dev", "STUNPort": -1, "DERPPort": 443},
-        {"Name": "900stun1", "RegionID": 900, "HostName": "stun.cloudflare.com", "STUNPort": 3478}
+        {
+          "Name": "900a",
+          "RegionID": 900,
+          "HostName": "derp-worker.example.workers.dev",
+          "STUNPort": -1,
+          "DERPPort": 443
+        },
+        { "Name": "900stun1", "RegionID": 900, "HostName": "stun.cloudflare.com", "STUNPort": 3478 }
       ]
     }
   }
@@ -98,6 +104,23 @@ curl -H "Authorization: Bearer $STATS_TOKEN" https://<your worker>/stats
 ```
 
 Returns the number of connected clients and hourly counters: messages and bytes in, packets relayed, connects, rejects and so on.
+
+## Development
+
+```sh
+npm ci
+npm run check         # type-check the relay, the tests and the example
+npm run lint          # ESLint with typescript-eslint's type-aware rules
+npm run format:check  # Prettier; `npm run format` rewrites the files
+npm test              # unit and integration tests
+npm run test:e2e      # end-to-end test, needs Go
+```
+
+`npm test` runs inside workerd through Vitest, so it needs no Cloudflare account. The tests drive the relay with a small DERP client over WebSocket: handshake, relaying, ping, peer-gone, rejected keys and the handshake timeout. The handshake test replays a ClientInfo frame that Tailscale's own `derp.Client` sealed. It lives in `test/fixtures/handshake.json`, with the generator in `test/fixtures/gen`. Its keys are throwaway test keys.
+
+`npm run test:e2e` starts `wrangler dev` with the relay and the example admission Worker, then runs a tailcat v0.8.0 server and client through it. It checks an echo between two allowed keys and that the relay refuses a third key. It takes about 30 seconds. CI runs it only when the workflow is started by hand.
+
+`.npmrc` sets `legacy-peer-deps`, because npm 11 crashes while resolving Vitest's optional peer dependencies.
 
 ## Known issues
 
