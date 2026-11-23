@@ -1,0 +1,8 @@
+{
+  "name": "derp-admission",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // No public route: the relay reaches this Worker over a service binding.
+  "workers_dev": false
+  // Set the allowlist with: npx wrangler secret put ALLOWED_KEYS
+}

@@ -1,0 +1,16 @@
+{
+  "name": "derp-admission",
+  "private": true,
+  "type": "module",
+  "license": "BSD-3-Clause",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261114.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.162.0"
+  }
+}

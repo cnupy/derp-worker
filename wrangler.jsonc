@@ -1,0 +1,24 @@
+{
+  "name": "derp-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "RELAY", "class_name": "Relay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Relay"] }]
+
+  // Admission: the relay admits a client only if an admission controller
+  // says so (see src/authorize.ts and examples/admission). With no
+  // controller configured, every client is rejected. Either bind a Worker
+  // as ADMISSION:
+  //
+  //   "services": [{ "binding": "ADMISSION", "service": "derp-admission" }]
+  //
+  // or set ADMISSION_URL to the controller's URL:
+  //
+  //   "vars": { "ADMISSION_URL": "https://admission.example.com/" }
+  //
+  // Optional settings, as vars or secrets:
+  //   STUN_SERVERS  comma-separated host:port list added to /derpmap.json
+  //   STATS_TOKEN   secret; enables /stats for "Authorization: Bearer <token>"
+}
